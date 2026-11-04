@@ -74,6 +74,7 @@ struct State {
     nonces: HashSet<String>,
     counter: u64,
     thumbprint: Option<String>,
+    account_binding: Option<Value>,
     orders: Vec<Order>,
     authzs: Vec<Authz>,
     /// Cloudflare records: id to (name, content).
@@ -396,6 +397,7 @@ async fn handle(
 
     Ok(match segments[0] {
         "account" => {
+            state.account_binding = payload.get("externalAccountBinding").cloned();
             let jwk = &protected["jwk"];
             let input = format!(
                 r#"{{"crv":"P-256","kty":"EC","x":"{}","y":"{}"}}"#,
@@ -791,6 +793,10 @@ async fn issues_through_transient_ca_and_dns_failures() {
 
 /// An ACME client for the fake CA and DNS, without a server or database.
 fn client(fake: SocketAddr) -> Acme {
+    client_with_eab(fake, Some("kid"), Some("aG1hYw"))
+}
+
+fn client_with_eab(fake: SocketAddr, kid: Option<&str>, hmac: Option<&str>) -> Acme {
     opentunnel_server::install_crypto_provider();
     let http = reqwest::Client::new();
     let dns = DnsProvider::Cloudflare {
@@ -802,8 +808,8 @@ fn client(fake: SocketAddr) -> Acme {
     let config = AcmeConfig {
         directory: format!("http://{fake}/directory"),
         email: "acme@opentunnel.test".into(),
-        eab_kid: Some("kid".into()),
-        eab_hmac_key: Some("aG1hYw".into()),
+        eab_kid: kid.map(str::to_owned),
+        eab_hmac_key: hmac.map(str::to_owned),
         account_key_jwk: Some(opentunnel_server::acme::generate_account_jwk().unwrap()),
         dns_propagation_timeout: Duration::ZERO,
         authorization_poll: Duration::from_millis(2),
@@ -833,6 +839,32 @@ async fn register(acme: &Acme, state: &Shared) {
     attempt(acme, &identifiers, &csr).await.unwrap();
     let state = state.lock().unwrap();
     assert!(state.thumbprint.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn registers_accounts_with_and_without_external_binding() {
+    for with_eab in [true, false] {
+        let (fake, state) = fake(Faults::default()).await;
+        let acme = if with_eab {
+            client(fake)
+        } else {
+            client_with_eab(fake, None, None)
+        };
+        register(&acme, &state).await;
+        assert_eq!(state.lock().unwrap().account_binding.is_some(), with_eab);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rejects_incomplete_external_binding() {
+    for (kid, hmac) in [(Some("kid"), None), (None, Some("aG1hYw"))] {
+        let (fake, state) = fake(Faults::default()).await;
+        let acme = client_with_eab(fake, kid, hmac);
+        let (identifiers, csr) = order("incomplete00");
+        let error = attempt(&acme, &identifiers, &csr).await.unwrap_err();
+        assert!(error.to_string().contains("are required together"));
+        assert!(state.lock().unwrap().orders.is_empty());
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

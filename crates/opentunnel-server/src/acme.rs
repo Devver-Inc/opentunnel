@@ -1,4 +1,4 @@
-//! A small ACME (RFC 8555) client for DNS-01 issuance with external account binding, as ZeroSSL requires.
+//! A small ACME (RFC 8555) client for DNS-01 issuance, with optional external account binding.
 //! One `issue` call is one attempt: a fresh order, its challenges, finalization with the tunnel's CSR, and the
 //! certificate chain. Retries of whole attempts are the job runner's (see `retry.rs`); an attempt only repeats
 //! requests that are safe to repeat: getting a nonce, a rejected nonce, and POST-as-GET reads.
@@ -218,8 +218,10 @@ impl Acme {
         csr_pem: &str,
         on_challenge: impl AsyncFnOnce(Challenge) -> Result<()>,
     ) -> Result<Issued> {
-        let (Some(kid), Some(hmac)) = (&self.config.eab_kid, &self.config.eab_hmac_key) else {
-            bail!("ACME_EAB_KID and ACME_EAB_HMAC_KEY are required");
+        let eab = match (&self.config.eab_kid, &self.config.eab_hmac_key) {
+            (Some(kid), Some(hmac)) => Some((kid, hmac)),
+            (None, None) => None,
+            _ => bail!("ACME_EAB_KID and ACME_EAB_HMAC_KEY are required together"),
         };
         let Some(dns) = &self.dns else {
             bail!("CLOUDFLARE_ZONE_ID and CLOUDFLARE_API_TOKEN are required");
@@ -251,12 +253,14 @@ impl Acme {
             kid: self.account.lock().await.clone(),
         };
         if session.kid.is_none() {
-            let binding = external_account_binding(&key, kid, hmac, &directory.new_account)?;
-            let payload = json!({
+            let mut payload = json!({
                 "contact": [format!("mailto:{}", self.config.email)],
                 "termsOfServiceAgreed": true,
-                "externalAccountBinding": binding,
             });
+            if let Some((kid, hmac)) = eab {
+                payload["externalAccountBinding"] =
+                    external_account_binding(&key, kid, hmac, &directory.new_account)?;
+            }
             let response = session.post(&directory.new_account, Some(&payload)).await?;
             let location = header(&response.headers, LOCATION)
                 .ok_or_else(|| anyhow!("ACME account has no location URL"))?;

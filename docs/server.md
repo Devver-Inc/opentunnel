@@ -297,7 +297,7 @@ Every flag also reads an environment variable (`opentunnel-server --help`).
 | `LOCAL_CA_FILE` | | with `ISSUER=local`, write the CA certificate here for clients to trust |
 | `ACME_URL` | ZeroSSL DV90 | |
 | `ACME_EMAIL` | `acme@opentunnel.xyz` | |
-| `ACME_EAB_KID`, `ACME_EAB_HMAC_KEY` | | secrets: ZeroSSL external account binding |
+| `ACME_EAB_KID`, `ACME_EAB_HMAC_KEY` | | secrets: external account binding; set both for ZeroSSL, or neither for a CA that does not require EAB |
 | `ACME_ACCOUNT_KEY_JWK` | | secret: the account's P-256 private JWK (`opentunnel-server account-key` makes one) |
 | `ACME_CA_BUNDLE` | | extra roots for the ACME server (Pebble) |
 | `ACME_DNS_PROPAGATION_TIMEOUT_MS` | `10000` | wait for public resolvers to see the TXT records; 0 skips |
@@ -325,9 +325,12 @@ Every flag also reads an environment variable (`opentunnel-server --help`).
 | `MAX_CONNS_PER_TUNNEL` | `1024` | public connections one tunnel carries at once on a machine, over all its bridges |
 | `BUFFERED_BYTES_LIMIT` | `268435456` | bytes of connection data a machine holds in memory at once (256 MiB), on top of each bridge's and connection's budget |
 | `METRICS_LISTEN` | `off` | Prometheus metrics at `/metrics` (`[::]:9091` on Fly: every interface, as Fly's scraper does not reach the 6PN address; unauthenticated, not in `[[services]]`); see [Observability](#observability) |
+
 | `SHUTDOWN_DRAIN_MS` | `10000` | after SIGTERM, how long the server keeps accepting and serving while bridges move elsewhere |
 | `LOG_FORMAT` | `text` | `json` writes one JSON object per line (`json` on Fly) |
 | `MESH_VERIFY_ADDRESS` | `true` | a peer's mesh address must be where its connection comes from and, on Fly, what `<machine>.vm.<app>.internal` resolves to ([Multiple regions](#multiple-regions)) |
+
+For Let's Encrypt, set `ACME_URL=https://acme-v02.api.letsencrypt.org/directory`, set `ACME_EMAIL` to an address you control, and leave both EAB variables unset. Use `https://acme-staging-v02.api.letsencrypt.org/directory` to test issuance without a browser-trusted certificate. Both issuers still need `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_API_TOKEN`, and a persistent `ACME_ACCOUNT_KEY_JWK`.
 
 Set secrets with `fly secrets set NAME=value ... -a opentunnel`.
 
